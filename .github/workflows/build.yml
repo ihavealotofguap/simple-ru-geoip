@@ -1,0 +1,64 @@
+name: Build geoip files
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 4 * * 0"
+  push:
+    branches:
+      - master
+    paths-ignore:
+      - ".gitignore"
+      - "LICENSE*"
+      - "*.md"
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout codebase
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: ./go.mod
+
+      - name: Set variables
+        run: |
+          echo "TAG_NAME=$(date +%Y%m%d%H%M)" >> $GITHUB_ENV
+          echo "RELEASE_NAME=$(date +%Y%m%d%H%M)" >> $GITHUB_ENV
+        shell: bash
+
+      - name: Download GeoLite2 CSV files
+        run: |
+          mkdir -p output
+          curl -L "https://raw.githubusercontent.com/Loyalsoldier/geoip/release/GeoLite2-Country-Locations-en.csv" -o ./output/GeoLite2-Country-Locations-en.csv
+          curl -L "https://raw.githubusercontent.com/Loyalsoldier/geoip/release/GeoLite2-Country-Blocks-IPv4.csv" -o ./output/GeoLite2-Country-Blocks-IPv4.csv
+          curl -L "https://raw.githubusercontent.com/Loyalsoldier/geoip/release/GeoLite2-Country-Blocks-IPv6.csv" -o ./output/GeoLite2-Country-Blocks-IPv6.csv
+          mkdir -p geolite2
+          cp ./output/GeoLite2-Country-*.csv ./geolite2/
+
+      - name: Build geoip files
+        run: |
+          go build ./
+          ./geoip convert -c ./config.json
+
+      - name: Generate sha256 checksum for dat and txt files
+        run: |
+          cd ./output || exit 1
+          for name in $(ls *.dat *.txt); do
+            sha256sum ${name} > ./${name}.sha256sum
+          done
+
+      - name: Create release and upload files
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$TAG_NAME" output/geoip.dat output/ru.txt output/private.txt \
+            --repo $GITHUB_REPOSITORY \
+            --title "$RELEASE_NAME" \
+            --notes "" \
+            --draft=false \
+            --prerelease=false
